@@ -10,6 +10,8 @@ export interface StoredImport {
   recipeId?: string;
   message?: string;
   timestamp?: number;
+  /** When the import was queued; the poll timeout counts from here */
+  startedAt?: number;
 }
 
 export function isImportInProgress(

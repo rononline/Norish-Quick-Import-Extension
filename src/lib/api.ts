@@ -167,6 +167,49 @@ export async function getRecipeStatus(
   throw new Error("Unexpected response format from recipe endpoint");
 }
 
+/**
+ * IDs of the imports Norish still has queued or running (tRPC
+ * recipes.getPending). An import that is no longer listed has finished:
+ * either the recipe exists now, or the import failed.
+ */
+export async function getPendingImportIds(
+  baseUrl: string,
+  apiKey: string,
+): Promise<Set<string>> {
+  const origin = baseUrl.replace(/\/api\/v1\/?$/, "");
+  const input = encodeURIComponent(JSON.stringify({ 0: { json: null } }));
+  const response = await fetch(
+    `${origin}/api/trpc/recipes.getPending?batch=1&input=${input}`,
+    { method: "GET", headers: { "x-api-key": apiKey } },
+  );
+
+  let data: unknown = null;
+  try {
+    data = await response.json();
+  } catch {
+    data = null;
+  }
+
+  if (!response.ok) {
+    throw new Error(extractErrorMessageFromResponse(null, response.status));
+  }
+
+  const first = Array.isArray(data)
+    ? (data[0] as Record<string, unknown>)
+    : null;
+  const result = first?.result as { data?: { json?: unknown } } | undefined;
+  const list = result?.data?.json;
+  if (!Array.isArray(list)) {
+    throw new Error("Unexpected response format from pending imports");
+  }
+
+  return new Set(
+    list
+      .map((item) => (item as { recipeId?: unknown })?.recipeId)
+      .filter((id): id is string => typeof id === "string"),
+  );
+}
+
 function extractErrorMessageFromResponse(
   data: unknown,
   status: number,
