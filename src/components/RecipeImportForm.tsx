@@ -216,7 +216,17 @@ export default function RecipeImportForm({ config }: RecipeImportFormProps) {
     try {
       const { baseUrl, apiKey } = await loadApiConfig();
 
-      const recipeId = await importRecipeFromUrl(baseUrl, apiKey, trimmed);
+      const { recipeId, status: importStatus } = await importRecipeFromUrl(
+        baseUrl,
+        apiKey,
+        trimmed,
+      );
+
+      if (importStatus === "exists") {
+        // Norish already has this recipe: offer it right away
+        setStatusAndPersist({ type: "success", recipeId });
+        return;
+      }
 
       setStatusAndPersist({
         type: "pending",
