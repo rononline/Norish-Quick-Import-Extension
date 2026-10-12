@@ -36,7 +36,7 @@ type Status =
   | { type: "idle" }
   | { type: "loading" }
   | { type: "parsing"; recipeId?: string; message?: string }
-  | { type: "pending"; recipeId: string; message?: string }
+  | { type: "pending"; recipeId: string; message?: string; startedAt?: number }
   | { type: "success"; recipeId?: string }
   | { type: "error"; message: string; recipeId?: string };
 
@@ -57,6 +57,7 @@ function toStoredImport(status: Status): StoredImport | null {
         status: "pending",
         recipeId: status.recipeId,
         message: status.message,
+        startedAt: status.startedAt,
       };
     case "success":
       return { status: "success", recipeId: status.recipeId };
@@ -232,6 +233,7 @@ export default function RecipeImportForm({ config }: RecipeImportFormProps) {
         type: "pending",
         recipeId,
         message: "Import queued. Waiting for parser status...",
+        startedAt: Date.now(),
       });
       requestBackgroundMonitor();
     } catch (error) {
