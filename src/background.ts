@@ -11,7 +11,9 @@ import {
 const IMPORT_STATUS_SYNC_ALARM = "norish-import-monitor";
 const IMPORT_STATUS_POLL_INTERVAL_MINUTES = 1;
 const POLL_INTERVAL_MS = 2000; // Poll every 2 seconds
-const POLL_TIMEOUT_MS = 3 * 60 * 1000; // 3 minute timeout (temporary fix, there is no way to know when the import is done, so we just poll for a while and then give up, needs backends changes on norish)
+// Norish has no import status endpoint, so poll for the recipe for a while.
+// AI and video imports can take several minutes.
+const POLL_TIMEOUT_MS = 6 * 60 * 1000;
 
 function syncBadgeWithImportStatus(lastImport: StoredImport | undefined): void {
   if (lastImport?.status === "success") {

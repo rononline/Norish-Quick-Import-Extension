@@ -53,18 +53,45 @@ export async function createNorishClient(
   };
 }
 
+export interface ImportResult {
+  recipeId: string;
+  /** "queued": Norish imports it in the background; "exists": already in Norish */
+  status: "queued" | "exists";
+}
+
+/**
+ * Read the import response. Current Norish answers
+ * `{ recipeId, status: "queued" | "exists" }`; older versions answered with
+ * the bare recipe UUID.
+ */
+export function parseImportResponse(data: unknown): ImportResult {
+  if (typeof data === "string" && data) {
+    return { recipeId: data, status: "queued" };
+  }
+  if (data && typeof data === "object") {
+    const obj = data as Record<string, unknown>;
+    if (typeof obj.recipeId === "string" && obj.recipeId) {
+      return {
+        recipeId: obj.recipeId,
+        status: obj.status === "exists" ? "exists" : "queued",
+      };
+    }
+  }
+  throw new Error("Unexpected response format from import endpoint");
+}
+
 /**
  * Import a recipe from a URL
- * @param baseUrl API base URL (e.g., https://rezepte.secucore.de/api/v1)
+ * @param baseUrl API base URL (e.g., https://norish.example.com/api/v1)
  * @param apiKey API authentication key
  * @param url Recipe URL to import
- * @returns Recipe UUID
+ * @returns Recipe UUID and whether it was queued or already exists
  */
 export async function importRecipeFromUrl(
   baseUrl: string,
   apiKey: string,
   url: string,
-): Promise<string> {
+): Promise<ImportResult> {
   const endpoint = `${baseUrl}/recipes/import/url`;
 
   const response = await fetch(endpoint, {
@@ -88,12 +115,7 @@ export async function importRecipeFromUrl(
     throw new Error(message);
   }
 
-  // Response is a UUID string
-  if (typeof data !== "string") {
-    throw new Error("Unexpected response format from import endpoint");
-  }
-
-  return data;
+  return parseImportResponse(data);
 }
 
 /**
@@ -167,7 +189,9 @@ function extractErrorMessageFromResponse(
     case 403:
       return "Access denied to this API";
     case 409:
-      return "This recipe already exists or is being imported";
+      return "This recipe is already being imported";
+    case 412:
+      return "Video imports need AI and video parsing enabled in Norish";
     case 422:
       return "Invalid request (invalid URL format?)";
     case 503:
