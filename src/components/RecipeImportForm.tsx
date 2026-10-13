@@ -15,14 +15,16 @@ import {
   PaperAirplaneIcon,
   type PaperAirplaneIconHandle,
 } from "@heroicons-animated/react/paper-airplane";
-import { useCurrentTabUrl } from "../hooks/useCurrentTabUrl";
+import { useCurrentTab } from "../hooks/useCurrentTabUrl";
 import type { StoredConfig } from "../types/storage";
 import {
   createNorishClient,
   defaultOriginForDomain,
   extractErrorMessage,
+  importRecipeFromPaste,
   importRecipeFromUrl,
 } from "../lib/api";
+import { pasteTextFor, readRecipeFromTab } from "../lib/pageRecipe";
 import { isExtensionContextValid } from "../lib/chrome";
 import type { StoredImport } from "../types/importStatus";
 
@@ -36,9 +38,17 @@ type Status =
   | { type: "idle" }
   | { type: "loading" }
   | { type: "parsing"; recipeId?: string; message?: string }
-  | { type: "pending"; recipeId: string; message?: string; startedAt?: number }
+  | {
+      type: "pending";
+      recipeId: string;
+      message?: string;
+      startedAt?: number;
+      kind?: StoredImport["kind"];
+      url?: string;
+      images?: string[];
+    }
   | { type: "success"; recipeId?: string }
-  | { type: "error"; message: string; recipeId?: string };
+  | { type: "error"; message: string; recipeId?: string; url?: string };
 
 function toStoredImport(status: Status): StoredImport | null {
   switch (status.type) {
@@ -58,6 +68,9 @@ function toStoredImport(status: Status): StoredImport | null {
         recipeId: status.recipeId,
         message: status.message,
         startedAt: status.startedAt,
+        kind: status.kind,
+        url: status.url,
+        images: status.images,
       };
     case "success":
       return { status: "success", recipeId: status.recipeId };
@@ -66,6 +79,7 @@ function toStoredImport(status: Status): StoredImport | null {
         status: "error",
         recipeId: status.recipeId,
         message: status.message,
+        url: status.url,
       };
   }
 }
@@ -84,6 +98,7 @@ function fromStoredImport(last: StoredImport | undefined): Status {
         type: "error",
         message: last.message ?? "Unknown error",
         recipeId: last.recipeId,
+        url: last.url,
       };
     case "parsing":
       return {
@@ -107,7 +122,8 @@ function fromStoredImport(last: StoredImport | undefined): Status {
 }
 
 export default function RecipeImportForm({ config }: RecipeImportFormProps) {
-  const tabUrl = useCurrentTabUrl();
+  const tab = useCurrentTab();
+  const tabUrl = tab.url;
   const [recipeUrl, setRecipeUrl] = useState("");
   const [status, setStatus] = useState<Status>({ type: "idle" });
   const planeRef = useRef<PaperAirplaneIconHandle>(null);
@@ -234,12 +250,15 @@ export default function RecipeImportForm({ config }: RecipeImportFormProps) {
         recipeId,
         message: "Import queued. Waiting for parser status...",
         startedAt: Date.now(),
+        kind: "url",
+        url: trimmed,
       });
       requestBackgroundMonitor();
     } catch (error) {
       setStatusAndPersist({
         type: "error",
         message: extractErrorMessage(error),
+        url: trimmed,
       });
     } finally {
       const elapsed = Date.now() - animationStartedAt;
@@ -249,6 +268,42 @@ export default function RecipeImportForm({ config }: RecipeImportFormProps) {
         );
       }
       planeRef.current?.stopAnimation();
+    }
+  };
+
+  // Reading the open page works where Norish itself is turned away (bot
+  // checks): the browser already shows the recipe.
+  const canImportFromPage =
+    tab.id !== undefined && /^https?:\/\//i.test(tabUrl);
+
+  const handleImportFromPage = async () => {
+    if (tab.id === undefined) return;
+    setStatusAndPersist({ type: "loading" });
+    try {
+      const page = await readRecipeFromTab(tab.id);
+      const { baseUrl, apiKey } = await loadApiConfig();
+      const recipeId = await importRecipeFromPaste(
+        baseUrl,
+        apiKey,
+        pasteTextFor(page),
+      );
+      setStatusAndPersist({
+        type: "pending",
+        recipeId,
+        message: page.jsonLd
+          ? "Recipe read from the page. Waiting for Norish..."
+          : "No recipe data on the page; Norish's AI reads the text. Waiting...",
+        startedAt: Date.now(),
+        kind: "page",
+        url: page.url,
+        images: page.images,
+      });
+      requestBackgroundMonitor();
+    } catch (error) {
+      setStatusAndPersist({
+        type: "error",
+        message: extractErrorMessage(error),
+      });
     }
   };
 
@@ -283,6 +338,22 @@ export default function RecipeImportForm({ config }: RecipeImportFormProps) {
           <PaperAirplaneIcon ref={planeRef} size={18} />
         </Button>
       </div>
+
+      {canImportFromPage && (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="self-start"
+          onPress={handleImportFromPage}
+          isDisabled={
+            status.type === "loading" ||
+            status.type === "parsing" ||
+            status.type === "pending"
+          }
+        >
+          Import from page content
+        </Button>
+      )}
 
       {status.type === "parsing" && (
         <Alert status="accent" className="items-start">
@@ -380,6 +451,13 @@ export default function RecipeImportForm({ config }: RecipeImportFormProps) {
             <Alert.Description>
               <div className="flex flex-col gap-1">
                 <span>{status.message}</span>
+                {canImportFromPage && status.url === tabUrl && (
+                  <span className="text-xs opacity-80">
+                    Norish may be blocked by this site. Try &quot;Import from
+                    page content&quot;: it reads the recipe from the page you
+                    have open.
+                  </span>
+                )}
               </div>
             </Alert.Description>
           </Alert.Content>

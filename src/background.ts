@@ -7,6 +7,7 @@ import {
   getPendingImportIds,
   getRecipeStatus,
   normalizeToDomain,
+  uploadGalleryImage,
 } from "./lib/api";
 
 const IMPORT_STATUS_SYNC_ALARM = "norish-import-monitor";
@@ -17,6 +18,8 @@ const POLL_INTERVAL_MS = 4000; // every check costs requests towards the API key
 // Norish that never answers (it counts from when the import was queued, so a
 // restarted service worker does not start over).
 const POLL_TIMEOUT_MS = 10 * 60 * 1000;
+// Page imports cannot be followed in Norish's queue: give up sooner
+const PAGE_POLL_TIMEOUT_MS = 4 * 60 * 1000;
 const FAILED_MESSAGE =
   "Norish could not import this page (no recipe found, or Norish already has it).";
 
@@ -143,8 +146,11 @@ async function checkImport(
   baseUrl: string,
   apiKey: string,
   recipeId: string,
+  kind: StoredImport["kind"],
 ): Promise<ImportCheck> {
   if (await getRecipeStatus(baseUrl, apiKey, recipeId)) return "done";
+  // Page imports run in another queue that Norish does not list
+  if (kind === "page") return "waiting";
 
   let pending: Set<string>;
   try {
@@ -176,10 +182,12 @@ async function pollRecipeStatus(
   apiKey: string,
   recipeId: string,
   startedAt: number,
+  kind: StoredImport["kind"],
 ): Promise<ImportCheck | "timeout"> {
-  while (Date.now() - startedAt < POLL_TIMEOUT_MS) {
+  const timeout = kind === "page" ? PAGE_POLL_TIMEOUT_MS : POLL_TIMEOUT_MS;
+  while (Date.now() - startedAt < timeout) {
     try {
-      const result = await checkImport(baseUrl, apiKey, recipeId);
+      const result = await checkImport(baseUrl, apiKey, recipeId, kind);
       if (result !== "waiting") return result;
     } catch (error) {
       const message = extractErrorMessage(error);
@@ -194,6 +202,33 @@ async function pollRecipeStatus(
   }
 
   return "timeout";
+}
+
+function dataUrlToBlob(dataUrl: string): Blob {
+  const [header, base64] = dataUrl.split(",", 2);
+  const type = /^data:([^;,]+)/.exec(header)?.[1] ?? "image/jpeg";
+  const bytes = Uint8Array.from(atob(base64 ?? ""), (c) => c.charCodeAt(0));
+  return new Blob([bytes], { type });
+}
+
+/** Upload the photos read from the page; a failed photo does not fail the import. */
+async function uploadPageImages(
+  baseUrl: string,
+  apiKey: string,
+  recipeId: string,
+  images: string[],
+): Promise<number> {
+  let uploaded = 0;
+  for (const [order, dataUrl] of images.entries()) {
+    try {
+      const blob = dataUrlToBlob(dataUrl);
+      await uploadGalleryImage(baseUrl, apiKey, recipeId, blob, order);
+      uploaded += 1;
+    } catch (error) {
+      console.warn("Norish Quick Import: photo upload failed", error);
+    }
+  }
+  return uploaded;
 }
 
 let isSyncing = false;
@@ -239,6 +274,7 @@ async function syncImportStatusInBackground(): Promise<void> {
 
     const startedAt =
       lastImport.startedAt ?? lastImport.timestamp ?? Date.now();
+    const { kind, url, images } = lastImport;
 
     // Update status to "parsing" while checking
     if (lastImport.status !== "parsing") {
@@ -246,6 +282,9 @@ async function syncImportStatusInBackground(): Promise<void> {
         status: "parsing",
         recipeId,
         startedAt,
+        kind,
+        url,
+        images,
         message: "Norish is processing your recipe.",
       });
     }
@@ -256,9 +295,13 @@ async function syncImportStatusInBackground(): Promise<void> {
         apiKey,
         recipeId,
         startedAt,
+        kind,
       );
 
       if (result === "done") {
+        if (kind === "page" && images?.length) {
+          await uploadPageImages(baseUrl, apiKey, recipeId, images);
+        }
         await persistLastImport({
           status: "success",
           recipeId,
@@ -267,6 +310,8 @@ async function syncImportStatusInBackground(): Promise<void> {
         await persistLastImport({
           status: "error",
           recipeId,
+          kind,
+          url,
           message:
             result === "failed"
               ? FAILED_MESSAGE
@@ -278,6 +323,8 @@ async function syncImportStatusInBackground(): Promise<void> {
       await persistLastImport({
         status: "error",
         recipeId,
+        kind,
+        url,
         message,
       });
     }
