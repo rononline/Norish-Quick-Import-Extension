@@ -45,6 +45,7 @@ type Status =
       startedAt?: number;
       kind?: StoredImport["kind"];
       url?: string;
+      images?: string[];
     }
   | { type: "success"; recipeId?: string }
   | { type: "error"; message: string; recipeId?: string; url?: string };
@@ -69,6 +70,7 @@ function toStoredImport(status: Status): StoredImport | null {
         startedAt: status.startedAt,
         kind: status.kind,
         url: status.url,
+        images: status.images,
       };
     case "success":
       return { status: "success", recipeId: status.recipeId };
@@ -294,6 +296,7 @@ export default function RecipeImportForm({ config }: RecipeImportFormProps) {
         startedAt: Date.now(),
         kind: "page",
         url: page.url,
+        images: page.images,
       });
       requestBackgroundMonitor();
     } catch (error) {

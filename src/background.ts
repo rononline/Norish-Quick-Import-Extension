@@ -7,6 +7,7 @@ import {
   getPendingImportIds,
   getRecipeStatus,
   normalizeToDomain,
+  uploadGalleryImage,
 } from "./lib/api";
 
 const IMPORT_STATUS_SYNC_ALARM = "norish-import-monitor";
@@ -203,6 +204,33 @@ async function pollRecipeStatus(
   return "timeout";
 }
 
+function dataUrlToBlob(dataUrl: string): Blob {
+  const [header, base64] = dataUrl.split(",", 2);
+  const type = /^data:([^;,]+)/.exec(header)?.[1] ?? "image/jpeg";
+  const bytes = Uint8Array.from(atob(base64 ?? ""), (c) => c.charCodeAt(0));
+  return new Blob([bytes], { type });
+}
+
+/** Upload the photos read from the page; a failed photo does not fail the import. */
+async function uploadPageImages(
+  baseUrl: string,
+  apiKey: string,
+  recipeId: string,
+  images: string[],
+): Promise<number> {
+  let uploaded = 0;
+  for (const [order, dataUrl] of images.entries()) {
+    try {
+      const blob = dataUrlToBlob(dataUrl);
+      await uploadGalleryImage(baseUrl, apiKey, recipeId, blob, order);
+      uploaded += 1;
+    } catch (error) {
+      console.warn("Norish Quick Import: photo upload failed", error);
+    }
+  }
+  return uploaded;
+}
+
 let isSyncing = false;
 
 async function syncImportStatusInBackground(): Promise<void> {
@@ -246,7 +274,7 @@ async function syncImportStatusInBackground(): Promise<void> {
 
     const startedAt =
       lastImport.startedAt ?? lastImport.timestamp ?? Date.now();
-    const { kind, url } = lastImport;
+    const { kind, url, images } = lastImport;
 
     // Update status to "parsing" while checking
     if (lastImport.status !== "parsing") {
@@ -256,6 +284,7 @@ async function syncImportStatusInBackground(): Promise<void> {
         startedAt,
         kind,
         url,
+        images,
         message: "Norish is processing your recipe.",
       });
     }
@@ -270,6 +299,9 @@ async function syncImportStatusInBackground(): Promise<void> {
       );
 
       if (result === "done") {
+        if (kind === "page" && images?.length) {
+          await uploadPageImages(baseUrl, apiKey, recipeId, images);
+        }
         await persistLastImport({
           status: "success",
           recipeId,

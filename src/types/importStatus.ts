@@ -16,6 +16,8 @@ export interface StoredImport {
   kind?: "url" | "page";
   /** The URL that was imported, to offer a retry from the page */
   url?: string;
+  /** Photos (data URLs) to upload once Norish created the recipe */
+  images?: string[];
 }
 
 export function isImportInProgress(
