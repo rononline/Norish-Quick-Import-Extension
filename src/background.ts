@@ -17,6 +17,8 @@ const POLL_INTERVAL_MS = 4000; // every check costs requests towards the API key
 // Norish that never answers (it counts from when the import was queued, so a
 // restarted service worker does not start over).
 const POLL_TIMEOUT_MS = 10 * 60 * 1000;
+// Page imports cannot be followed in Norish's queue: give up sooner
+const PAGE_POLL_TIMEOUT_MS = 4 * 60 * 1000;
 const FAILED_MESSAGE =
   "Norish could not import this page (no recipe found, or Norish already has it).";
 
@@ -143,8 +145,11 @@ async function checkImport(
   baseUrl: string,
   apiKey: string,
   recipeId: string,
+  kind: StoredImport["kind"],
 ): Promise<ImportCheck> {
   if (await getRecipeStatus(baseUrl, apiKey, recipeId)) return "done";
+  // Page imports run in another queue that Norish does not list
+  if (kind === "page") return "waiting";
 
   let pending: Set<string>;
   try {
@@ -176,10 +181,12 @@ async function pollRecipeStatus(
   apiKey: string,
   recipeId: string,
   startedAt: number,
+  kind: StoredImport["kind"],
 ): Promise<ImportCheck | "timeout"> {
-  while (Date.now() - startedAt < POLL_TIMEOUT_MS) {
+  const timeout = kind === "page" ? PAGE_POLL_TIMEOUT_MS : POLL_TIMEOUT_MS;
+  while (Date.now() - startedAt < timeout) {
     try {
-      const result = await checkImport(baseUrl, apiKey, recipeId);
+      const result = await checkImport(baseUrl, apiKey, recipeId, kind);
       if (result !== "waiting") return result;
     } catch (error) {
       const message = extractErrorMessage(error);
@@ -239,6 +246,7 @@ async function syncImportStatusInBackground(): Promise<void> {
 
     const startedAt =
       lastImport.startedAt ?? lastImport.timestamp ?? Date.now();
+    const { kind, url } = lastImport;
 
     // Update status to "parsing" while checking
     if (lastImport.status !== "parsing") {
@@ -246,6 +254,8 @@ async function syncImportStatusInBackground(): Promise<void> {
         status: "parsing",
         recipeId,
         startedAt,
+        kind,
+        url,
         message: "Norish is processing your recipe.",
       });
     }
@@ -256,6 +266,7 @@ async function syncImportStatusInBackground(): Promise<void> {
         apiKey,
         recipeId,
         startedAt,
+        kind,
       );
 
       if (result === "done") {
@@ -267,6 +278,8 @@ async function syncImportStatusInBackground(): Promise<void> {
         await persistLastImport({
           status: "error",
           recipeId,
+          kind,
+          url,
           message:
             result === "failed"
               ? FAILED_MESSAGE
@@ -278,6 +291,8 @@ async function syncImportStatusInBackground(): Promise<void> {
       await persistLastImport({
         status: "error",
         recipeId,
+        kind,
+        url,
         message,
       });
     }

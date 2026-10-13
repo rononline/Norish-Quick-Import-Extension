@@ -119,6 +119,41 @@ export async function importRecipeFromUrl(
 }
 
 /**
+ * Import a recipe from text (Norish's paste import): JSON-LD, YAML or plain
+ * text. Used when Norish cannot open the site itself.
+ * @returns ID of the recipe being created
+ */
+export async function importRecipeFromPaste(
+  baseUrl: string,
+  apiKey: string,
+  text: string,
+): Promise<string> {
+  const response = await fetch(`${baseUrl}/recipes/import/paste`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+    },
+    body: JSON.stringify({ text }),
+  });
+
+  let data: unknown = null;
+  try {
+    data = await response.json();
+  } catch {
+    data = null;
+  }
+
+  if (!response.ok) {
+    throw new Error(extractErrorMessageFromResponse(data, response.status));
+  }
+
+  const ids = (data as { recipeIds?: unknown } | null)?.recipeIds;
+  if (Array.isArray(ids) && typeof ids[0] === "string") return ids[0];
+  throw new Error("Unexpected response format from paste import endpoint");
+}
+
+/**
  * Get recipe status by ID. Returns null if recipe not found (still being parsed).
  * @param baseUrl API base URL
  * @param apiKey API authentication key

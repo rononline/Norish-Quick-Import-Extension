@@ -12,6 +12,10 @@ export interface StoredImport {
   timestamp?: number;
   /** When the import was queued; the poll timeout counts from here */
   startedAt?: number;
+  /** "page": imported from the open page's content (paste import) */
+  kind?: "url" | "page";
+  /** The URL that was imported, to offer a retry from the page */
+  url?: string;
 }
 
 export function isImportInProgress(
