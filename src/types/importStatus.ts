@@ -18,6 +18,9 @@ export interface StoredImport {
   url?: string;
   /** Photos (data URLs) to upload once Norish created the recipe */
   images?: string[];
+  recipeName?: string;
+  recipeImage?: string;
+  alreadyExists?: boolean;
 }
 
 export function isImportInProgress(

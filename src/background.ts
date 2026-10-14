@@ -302,9 +302,15 @@ async function syncImportStatusInBackground(): Promise<void> {
         if (kind === "page" && images?.length) {
           await uploadPageImages(baseUrl, apiKey, recipeId, images);
         }
+        // Name and photo for the success card (after the upload above)
+        const recipe = await getRecipeStatus(baseUrl, apiKey, recipeId).catch(
+          () => null,
+        );
         await persistLastImport({
           status: "success",
           recipeId,
+          recipeName: recipe?.name,
+          recipeImage: recipe?.image ?? undefined,
         });
       } else {
         await persistLastImport({
